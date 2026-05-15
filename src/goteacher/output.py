@@ -63,17 +63,30 @@ def render_board(result: AnalysisResult, record: GameRecord) -> str:
             cells.append("●" if v == "B" else "○" if v == "W" else "·")
         lines.append(f"{row_num:2d} " + " ".join(cells))
 
-    # Ownership territory summary
+    # Territory and score info — combine into one clear line
+    if result.root.score_lead is not None:
+        komi = result.request.komi or 0.0
+        sl = result.root.score_lead
+        board_diff = -sl + komi
+        if board_diff > 0:
+            board_msg = f"黑方盘面领先{board_diff:.1f}目"
+        elif board_diff < 0:
+            board_msg = f"白方盘面领先{abs(board_diff):.1f}目"
+        else:
+            board_msg = "盘面均势"
+        lines.append("")
+        lines.append(f"阶段：{phase}（rawVarTimeLeft={result.root.raw_var_time_left}）")
+        lines.append(f"形势：{balance}（含贴{komi}目），盘面：{board_msg}")
+        lines.append(f"引擎胜率{result.root.winrate}，scoreLead={sl:.1f}")
+    else:
+        lines.append("")
+        lines.append(f"阶段：{phase}（rawVarTimeLeft={result.root.raw_var_time_left}）")
+        lines.append(f"形势：{balance}")
     if result.arrays.ownership:
         own_vals = result.arrays.ownership.values
-        black_area = sum(v for v in own_vals if v > 0)
-        white_area = sum(-v for v in own_vals if v < 0)
-        lines.append("")
-        lines.append(f"地域目数：黑方约{black_area:.1f}目、白方约{white_area:.1f}目（ownership累计）")
-
-    lines.append("")
-    lines.append(f"阶段：{phase}（rawVarTimeLeft={result.root.raw_var_time_left}）")
-    lines.append(f"形势：{balance}，引擎胜率{result.root.winrate}，scoreLead={result.root.score_lead}")
+        b_strong = sum(1 for v in own_vals if v > 0.5)
+        w_strong = sum(1 for v in own_vals if v < -0.5)
+        lines.append(f"确定性地域：黑方{b_strong}点、白方{w_strong}点（ownership置信>50%）")
     if result.root.human_st_wr_error is not None:
         complexity = "高" if result.root.human_st_wr_error > 0.06 else "中等" if result.root.human_st_wr_error > 0.03 else "低"
         lines.append(f"复杂度：{complexity}（humanStWrError={result.root.human_st_wr_error:.3f}）")
