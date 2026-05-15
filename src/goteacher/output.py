@@ -66,11 +66,10 @@ def render_board(result: AnalysisResult, record: GameRecord) -> str:
     # Ownership territory summary
     if result.arrays.ownership:
         own_vals = result.arrays.ownership.values
-        b_territory = sum(1 for v in own_vals if v > 0.7)
-        w_territory = sum(1 for v in own_vals if v < -0.7)
-        contested = sum(1 for v in own_vals if -0.7 <= v <= 0.7)
+        black_area = sum(v for v in own_vals if v > 0)
+        white_area = sum(-v for v in own_vals if v < 0)
         lines.append("")
-        lines.append(f"地域：黑方{b_territory}格、白方{w_territory}格、争夺中{contested}格")
+        lines.append(f"地域目数：黑方约{black_area:.1f}目、白方约{white_area:.1f}目（ownership累计）")
 
     lines.append("")
     lines.append(f"阶段：{phase}（rawVarTimeLeft={result.root.raw_var_time_left}）")
