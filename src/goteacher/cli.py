@@ -13,12 +13,12 @@ from goteacher import __version__, cache, config
 from goteacher.analysis.normalize import normalize_response
 from goteacher.doctor import check_setup
 from goteacher.katago.engine import EngineConfig, KataGoEngine, require_files
-from goteacher.katago.protocol import Query
+from goteacher.katago.protocol import Move, Query
 from goteacher.models.registry import install_model, load_registry
 from goteacher.output import render_json, render_markdown
 from goteacher.profile import normalize_profile, validate_profile
 from goteacher.setup import setup_katago
-from goteacher.sgf.replay import moves_until, parse_sgf_file
+from goteacher.sgf.replay import moves_until, parse_sgf_file, played_move_at
 
 
 @click.group()
@@ -130,6 +130,7 @@ def cache_clear() -> None:
 @main.command()
 @click.option("--sgf", "sgf_path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--turn", required=True, type=int)
+@click.option("--move", default=None, help="Evaluate a specific move at this turn (e.g. D4, pass).")
 @click.option("--profile", default=None)
 @click.option("--rules", default=None)
 @click.option("--komi", default=None, type=float)
@@ -137,8 +138,8 @@ def cache_clear() -> None:
 @click.option("--format", "fmt", type=click.Choice(["json", "markdown"]), default="json")
 @click.option("--no-cache", is_flag=True, default=False)
 @click.option("--refresh", is_flag=True, default=False)
-def analyze(sgf_path: str, turn: int, profile: str | None, rules: str | None, komi: float | None, visits: int | None, fmt: str, no_cache: bool, refresh: bool) -> None:
-    result = asyncio.run(_analyze(sgf_path, turn, profile, rules, komi, visits, no_cache, refresh))
+def analyze(sgf_path: str, turn: int, move: str | None, profile: str | None, rules: str | None, komi: float | None, visits: int | None, fmt: str, no_cache: bool, refresh: bool) -> None:
+    result = asyncio.run(_analyze(sgf_path, turn, profile, rules, komi, visits, no_cache, refresh, extra_move=move))
     click.echo(render_json(result) if fmt == "json" else render_markdown(result), nl=False)
 
 
@@ -180,7 +181,7 @@ def scan(sgf_path: str, profile: str | None, max_items: int, visits_fast: int) -
     }, indent=2, ensure_ascii=False))
 
 
-async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | None, komi: float | None, visits: int | None, no_cache: bool, refresh: bool):
+async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | None, komi: float | None, visits: int | None, no_cache: bool, refresh: bool, extra_move: str | None = None):
     cfg = config.load_config()
     record = parse_sgf_file(sgf_path)
     resolved_rules = rules or record.rules or cfg.default_rules
@@ -197,6 +198,7 @@ async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | N
     key_payload = {
         "sgf": str(Path(sgf_path).resolve()),
         "turn": turn,
+        "extraMove": extra_move,
         "rules": resolved_rules,
         "komi": resolved_komi,
         "visits": resolved_visits,
@@ -211,15 +213,30 @@ async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | N
         if cached:
             from goteacher.analysis.schema import AnalysisResult
             return AnalysisResult.model_validate(cached)
+    query_moves = list(moves_until(record, turn))
+    analyze_turns = [turn]
+    actual = played_move_at(record, turn)
+    if extra_move:
+        # User wants to evaluate a specific move at this turn's position.
+        # moves_until already includes the played move; we add the user's move after it.
+        # The turn position already has the actual played move, so we analyze
+        # the current turn (before user's move) and turn+1 (after user's move).
+        next_color = "W" if actual and actual.color == "B" else "B"
+        query_moves.append(Move(next_color, extra_move.upper()))
+        analyze_turns.append(turn + 1)
+    elif actual and turn > 0:
+        # Evaluate the actual played move via rootInfo diff.
+        # We need turn-1 (before the move) and turn (after the move).
+        analyze_turns.insert(0, turn - 1)
     query = Query(
         id=key[:24],
-        moves=moves_until(record, turn),
+        moves=query_moves,
         rules=resolved_rules,
         komi=resolved_komi,
         board_x_size=record.board_size,
         board_y_size=record.board_size,
         initial_stones=record.initial_stones,
-        analyze_turns=[turn],
+        analyze_turns=analyze_turns,
         max_visits=resolved_visits,
         include_ownership=True,
         include_ownership_stdev=True,
@@ -231,7 +248,7 @@ async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | N
         response = await engine.analyze(query)
     finally:
         await engine.close()
-    result = normalize_response(response, app_config=cfg, record=record, sgf_path=sgf_path, turn=turn, profile=resolved_profile, visits=resolved_visits, rules=resolved_rules, komi=resolved_komi)
+    result = normalize_response(response, app_config=cfg, record=record, sgf_path=sgf_path, turn=turn, profile=resolved_profile, visits=resolved_visits, rules=resolved_rules, komi=resolved_komi, extra_move=extra_move)
     if cfg.cache_enabled and not no_cache:
         cache.put(key, result.model_dump(by_alias=True, exclude_none=True))
     return result

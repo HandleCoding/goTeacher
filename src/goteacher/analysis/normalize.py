@@ -22,6 +22,67 @@ from goteacher.teaching.scoring import evaluate_played_move, score_teaching
 LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
 
 
+def _score_for_player(root_info: dict[str, Any]) -> float | None:
+    sl = root_info.get("scoreLead")
+    if sl is None:
+        return None
+    player = root_info.get("currentPlayer")
+    return float(sl) if player == "W" else -float(sl)
+
+
+def _winrate_for_player(root_info: dict[str, Any]) -> float | None:
+    wr = root_info.get("winrate")
+    if wr is None:
+        return None
+    player = root_info.get("currentPlayer")
+    return float(wr) if player == "W" else 1.0 - float(wr)
+
+
+def _compute_score_loss(before_root: dict[str, Any], after_root: dict[str, Any]) -> float | None:
+    sl_before = _score_for_player(before_root)
+    sl_after = _score_for_player(after_root)
+    if sl_before is None or sl_after is None:
+        return None
+    return round(max(0.0, sl_before - sl_after), 4)
+
+
+def _compute_winrate_loss(before_root: dict[str, Any], after_root: dict[str, Any]) -> float | None:
+    wr_before = _winrate_for_player(before_root)
+    wr_after = _winrate_for_player(after_root)
+    if wr_before is None or wr_after is None:
+        return None
+    return round(max(0.0, wr_before - wr_after), 6)
+
+
+def _coord_to_policy_index(coord: str, width: int, height: int) -> int | None:
+    if coord == "pass":
+        return width * height
+    if len(coord) < 2:
+        return None
+    col_letter = coord[0].upper()
+    row_str = coord[1:]
+    if col_letter not in LETTERS:
+        return None
+    col = LETTERS.index(col_letter)
+    try:
+        row = int(row_str)
+    except ValueError:
+        return None
+    if col < 0 or col >= width or row < 1 or row > height:
+        return None
+    return (height - row) * width + col
+
+
+def _prior_from_policy(policy: Any, coord: str, width: int, height: int) -> float | None:
+    if policy is None:
+        return None
+    idx = _coord_to_policy_index(coord, width, height)
+    if idx is None or idx >= len(policy):
+        return None
+    val = policy[idx]
+    return float(val) if val >= 0 else None
+
+
 def normalize_response(
     response: dict[str, Any],
     *,
@@ -33,13 +94,40 @@ def normalize_response(
     visits: int,
     rules: str,
     komi: float,
+    extra_move: str | None = None,
 ) -> AnalysisResult:
     analysis = analysis_for_turn(response, turn)
     root_info = analysis.get("rootInfo", {})
     move_infos = analysis.get("moveInfos", [])
     candidates = [_candidate_from_move_info(item, index + 1) for index, item in enumerate(move_infos)]
     actual = played_move_at(record, turn)
-    played = evaluate_played_move(actual.point if actual else None, candidates)
+    played_coord = extra_move or (actual.point if actual else None)
+    played = evaluate_played_move(played_coord, candidates)
+    width = record.board_size
+    height = record.board_size
+    if played.move:
+        if extra_move:
+            # --move: analyzeTurns=[turn, turn+1], current turn is before the move
+            next_analysis = analysis_for_turn(response, turn + 1)
+            next_root = next_analysis.get("rootInfo", {}) if next_analysis else {}
+            if next_root:
+                played.score_loss = _compute_score_loss(root_info, next_root)
+                played.winrate_loss = _compute_winrate_loss(root_info, next_root)
+            if played.prior is None:
+                played.prior = _prior_from_policy(analysis.get("policy"), played.move, width, height)
+            if played.human_prior is None:
+                played.human_prior = _prior_from_policy(analysis.get("humanPolicy"), played.move, width, height)
+        else:
+            # Normal: analyzeTurns=[turn-1, turn], turn-1 is before the move
+            prev_analysis = analysis_for_turn(response, turn - 1) if turn > 0 else None
+            prev_root = prev_analysis.get("rootInfo", {}) if prev_analysis else {}
+            if played.score_loss is None and prev_root:
+                played.score_loss = _compute_score_loss(prev_root, root_info)
+                played.winrate_loss = _compute_winrate_loss(prev_root, root_info)
+            if played.prior is None:
+                played.prior = _prior_from_policy(prev_analysis.get("policy") if prev_analysis else None, played.move, width, height)
+            if played.human_prior is None:
+                played.human_prior = _prior_from_policy(prev_analysis.get("humanPolicy") if prev_analysis else None, played.move, width, height)
     teaching = score_teaching(played, candidates)
     width = record.board_size
     height = record.board_size

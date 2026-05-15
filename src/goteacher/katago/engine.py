@@ -62,17 +62,30 @@ class KataGoEngine:
         assert self._process is not None
         if self._process.stdin is None or self._process.stdout is None:
             raise EngineError("KataGo pipes were not created")
+        num_turns = len(query.analyze_turns) if query.analyze_turns else 1
         async with self._lock:
             try:
                 self._process.stdin.write(query.to_json_line())
                 await self._process.stdin.drain()
-                line = await asyncio.wait_for(self._process.stdout.readline(), timeout=self.config.query_timeout)
+                if num_turns == 1:
+                    line = await asyncio.wait_for(self._process.stdout.readline(), timeout=self.config.query_timeout)
+                    if not line:
+                        code = await self._process.wait()
+                        raise EngineError(f"KataGo exited with code {code}; stderr tail: {self.stderr_tail()}")
+                    response = parse_response_line(line)
+                else:
+                    parts: list[dict[str, Any]] = []
+                    for _ in range(num_turns):
+                        line = await asyncio.wait_for(self._process.stdout.readline(), timeout=self.config.query_timeout)
+                        if not line:
+                            code = await self._process.wait()
+                            raise EngineError(f"KataGo exited with code {code}; stderr tail: {self.stderr_tail()}")
+                        parts.append(parse_response_line(line))
+                    response = {"id": parts[0].get("id"), "results": [{"turn": p.get("turnNumber", i), "analysis": p} for i, p in enumerate(parts)]}
+            except EngineError:
+                raise
             except Exception as exc:
                 raise EngineError(f"KataGo query failed: {exc}; stderr tail: {self.stderr_tail()}") from exc
-        if not line:
-            code = await self._process.wait()
-            raise EngineError(f"KataGo exited with code {code}; stderr tail: {self.stderr_tail()}")
-        response = parse_response_line(line)
         response_id = response.get("id")
         if response_id and response_id != query.id:
             raise EngineError(f"KataGo response id mismatch: expected {query.id}, got {response_id}")
