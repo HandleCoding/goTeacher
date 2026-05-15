@@ -382,7 +382,7 @@ async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | N
         cached = cache.get(key)
         if cached:
             from goteacher.analysis.schema import AnalysisResult
-            return AnalysisResult.model_validate(cached)
+            return AnalysisResult.model_validate(cached), record
     query_moves = list(moves_until(record, turn))
     analyze_turns = [turn]
     actual = played_move_at(record, turn)
