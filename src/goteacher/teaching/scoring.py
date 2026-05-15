@@ -9,7 +9,7 @@ def evaluate_played_move(played_move: str | None, candidates: list[Candidate]) -
     best = candidates[0] if candidates else None
     played = next((candidate for candidate in candidates if candidate.move == played_move), None)
     if played is None:
-        return PlayedMoveEvaluation(move=played_move)
+        return PlayedMoveEvaluation(move=played_move, scoreLoss=None, winrateLoss=None)
     score_loss = None
     winrate_loss = None
     if best and best.score_lead is not None and played.score_lead is not None:
@@ -27,10 +27,14 @@ def evaluate_played_move(played_move: str | None, candidates: list[Candidate]) -
 
 
 def score_teaching(played: PlayedMoveEvaluation, candidates: list[Candidate]) -> TeachingSummary:
-    severity = severity_for(played.score_loss, played.winrate_loss)
+    if played.move and played.score_loss is None and played.winrate_loss is None:
+        severity = "unknown"
+        why = ["played_move_not_in_candidates"]
+    else:
+        severity = severity_for(played.score_loss, played.winrate_loss)
+        why = []
     categories: list[str] = []
     signals: list[TeachingSignal] = []
-    why: list[str] = []
     best = candidates[0] if candidates else None
     if best:
         category = policy_winrate_category(best.prior, best.winrate)

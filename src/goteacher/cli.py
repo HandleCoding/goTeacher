@@ -16,6 +16,7 @@ from goteacher.katago.engine import EngineConfig, KataGoEngine, require_files
 from goteacher.katago.protocol import Query
 from goteacher.models.registry import install_model, load_registry
 from goteacher.output import render_json, render_markdown
+from goteacher.profile import normalize_profile, validate_profile
 from goteacher.setup import setup_katago
 from goteacher.sgf.replay import moves_until, parse_sgf_file
 
@@ -185,9 +186,13 @@ async def _analyze(sgf_path: str, turn: int, profile: str | None, rules: str | N
     resolved_rules = rules or record.rules or cfg.default_rules
     resolved_komi = komi if komi is not None else (record.komi if record.komi is not None else cfg.default_komi)
     resolved_visits = visits or cfg.default_visits
-    resolved_profile = profile or cfg.default_human_profile
-    if resolved_profile and not cfg.human_model:
-        raise click.ClickException("human profile requires a configured Human SL model; run init with --human-model")
+    resolved_profile = normalize_profile(profile or cfg.default_human_profile)
+    if resolved_profile:
+        _valid, err = validate_profile(resolved_profile)
+        if err:
+            raise click.ClickException(err)
+        if not cfg.human_model:
+            raise click.ClickException("human profile requires a configured Human SL model; run init with --human-model")
     require_files(cfg.katago_config, cfg.engine_model)
     key_payload = {
         "sgf": str(Path(sgf_path).resolve()),

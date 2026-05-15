@@ -51,6 +51,7 @@ class KataGoEngine:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=4 * 1024 * 1024,
             ),
             timeout=self.config.startup_timeout,
         )
