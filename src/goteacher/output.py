@@ -47,8 +47,10 @@ def render_board(result: AnalysisResult, record: GameRecord) -> str:
     phase = _phase_label(result.root.raw_var_time_left)
     sl = result.root.score_lead
     balance = _balance_label(sl, result.root.to_play)
+    to_play = _color_cn(result.root.to_play)
+    profile = result.request.human_profile or "未知棋力"
     lines = [
-        f"当前局面（第{result.request.turn}手，轮到{_color_cn(result.root.to_play)}棋）",
+        f"当前局面（第{result.request.turn}手，轮到{to_play}棋）",
         "",
     ]
     header = "   " + " ".join(LETTERS[:size])
@@ -60,22 +62,83 @@ def render_board(result: AnalysisResult, record: GameRecord) -> str:
             v = grid[row][col]
             cells.append("●" if v == "B" else "○" if v == "W" else "·")
         lines.append(f"{row_num:2d} " + " ".join(cells))
+
+    # Ownership territory summary
+    if result.arrays.ownership:
+        own_vals = result.arrays.ownership.values
+        b_territory = sum(1 for v in own_vals if v > 0.7)
+        w_territory = sum(1 for v in own_vals if v < -0.7)
+        contested = sum(1 for v in own_vals if -0.7 <= v <= 0.7)
+        lines.append("")
+        lines.append(f"地域：黑方{b_territory}格、白方{w_territory}格、争夺中{contested}格")
+
     lines.append("")
     lines.append(f"阶段：{phase}（rawVarTimeLeft={result.root.raw_var_time_left}）")
-    lines.append(f"形势：{balance}")
-    if result.played_move_evaluation.move:
-        pm = result.played_move_evaluation
-        loss_str = f"损失约{pm.score_loss}目" if pm.score_loss is not None else "损失未知"
-        lines.append(f"实战手：{pm.move}，{loss_str}，severity={result.teaching.severity}")
-    if result.candidates:
-        best = result.candidates[0]
-        hp_str = f"，人类{result.request.human_profile}概率{int((best.human_prior or 0)*100)}%" if best.human_prior is not None else ""
-        lines.append(f"推荐手：{best.move}（引擎prior={int((best.prior or 0)*100)}%{hp_str}）")
+    lines.append(f"形势：{balance}，引擎胜率{result.root.winrate}，scoreLead={result.root.score_lead}")
     if result.root.human_st_wr_error is not None:
         complexity = "高" if result.root.human_st_wr_error > 0.06 else "中等" if result.root.human_st_wr_error > 0.03 else "低"
         lines.append(f"复杂度：{complexity}（humanStWrError={result.root.human_st_wr_error:.3f}）")
+    if result.root.human_winrate is not None:
+        wr_diff = abs((result.root.winrate or 0) - result.root.human_winrate)
+        lines.append(f"引擎胜率={result.root.winrate}，{profile}人类胜率={result.root.human_winrate}，差异={wr_diff:.3f}")
+
+    # Played move evaluation
+    if result.played_move_evaluation.move:
+        pm = result.played_move_evaluation
+        parts = [f"实战手：{pm.move}"]
+        if pm.rank_by_visits is not None:
+            parts.append(f"排名#{pm.rank_by_visits}")
+        if pm.score_loss is not None:
+            parts.append(f"损失{pm.score_loss:.2f}目")
+        if pm.winrate_loss is not None:
+            parts.append(f"胜率损失{pm.winrate_loss:.1%}")
+        if pm.prior is not None:
+            parts.append(f"引擎prior={pm.prior:.1%}")
+        if pm.human_prior is not None:
+            parts.append(f"人类prior={pm.human_prior:.1%}")
+        parts.append(f"severity={result.teaching.severity}")
+        lines.append("")
+        lines.append(" ".join(parts))
+
+    # Top 5 candidates comparison
+    if result.candidates:
+        lines.append("")
+        lines.append(f"候选手（{to_play}棋可选）：")
+        for c in result.candidates[:5]:
+            c_parts = [f"  {c.move}"]
+            if c.winrate is not None:
+                c_parts.append(f"wr={c.winrate:.3f}")
+            if c.score_lead is not None:
+                c_parts.append(f"sl={c.score_lead:.2f}")
+            if c.prior is not None:
+                c_parts.append(f"引擎prior={c.prior:.1%}")
+            if c.human_prior is not None:
+                c_parts.append(f"人类prior={c.human_prior:.1%}")
+            if c.visits:
+                c_parts.append(f"visits={c.visits}")
+            lines.append(" ".join(c_parts))
+
+    # Human policy top - what humans at this rank typically play
+    if result.human_policy_top.entries:
+        lines.append("")
+        lines.append(f"{profile}人类偏好分布：")
+        for entry in result.human_policy_top.entries[:7]:
+            parts = [f"  {entry.move}"]
+            parts.append(f"人类={entry.human_prior:.1%}")
+            if entry.prior is not None:
+                parts.append(f"引擎={entry.prior:.1%}")
+            lines.append(" ".join(parts))
+
+    # Engine-human gap
+    if result.summary.human_vs_engine_gap:
+        lines.append("")
+        lines.append(f"引擎-人类分歧：{result.summary.human_vs_engine_gap}")
+
+    # Teaching focus
     if result.teaching.why_interesting:
+        lines.append("")
         lines.append("教学重点：" + "、".join(result.teaching.why_interesting))
+
     return "\n".join(lines) + "\n"
 
 
