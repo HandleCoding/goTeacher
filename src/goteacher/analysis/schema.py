@@ -112,6 +112,16 @@ class HumanPolicyTop(BaseModel):
     entries: list[PolicyEntry] = Field(default_factory=list)
 
 
+class PositionSummary(BaseModel):
+    phase: str = Field(default="unknown", description="opening/middlegame/endgame")
+    phase_label: str = Field(default="未知", description="布局/中盘/官子")
+    balance: str = Field(default="unknown", description="均衡/黑方微领X目/白方大优X目")
+    complexity: str = Field(default="unknown", description="低/中等/高")
+    last_move_verdict: str | None = Field(default=None, alias="lastMoveVerdict")
+    best_move_note: str | None = Field(default=None, alias="bestMoveNote")
+    human_vs_engine_gap: str | None = Field(default=None, alias="humanVsEngineGap")
+
+
 class AnalysisResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -122,6 +132,7 @@ class AnalysisResult(BaseModel):
     played_move_evaluation: PlayedMoveEvaluation = Field(alias="playedMoveEvaluation")
     candidates: list[Candidate]
     human_policy_top: HumanPolicyTop = Field(default_factory=HumanPolicyTop, alias="humanPolicyTop")
+    summary: PositionSummary = Field(default_factory=PositionSummary)
     teaching: TeachingSummary
     arrays: Arrays
     warnings: list[str] = Field(default_factory=list)

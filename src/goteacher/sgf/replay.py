@@ -60,6 +60,90 @@ def played_move_at(record: GameRecord, turn: int) -> Move | None:
     return record.moves[turn - 1]
 
 
+LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
+
+
+def board_at(record: GameRecord, turn: int) -> list[list[str]]:
+    """Return a size×size grid with 'B', 'W', or '.' for each intersection at the given turn."""
+    size = record.board_size
+    grid: list[list[str]] = [["." for _ in range(size)] for _ in range(size)]
+    for stone in record.initial_stones:
+        r, c = _katago_to_rc(stone.point, size)
+        if r is not None:
+            grid[r][c] = stone.color
+    for move in record.moves[:turn]:
+        if move.point == "pass":
+            continue
+        r, c = _katago_to_rc(move.point, size)
+        if r is None:
+            continue
+        if move.color == "B":
+            _place_black(grid, r, c, size)
+        else:
+            _place_white(grid, r, c, size)
+    return grid
+
+
+def _katago_to_rc(coord: str, size: int) -> tuple[int, int] | tuple[None, None]:
+    if coord == "pass" or len(coord) < 2:
+        return None, None
+    col_letter = coord[0].upper()
+    row_str = coord[1:]
+    if col_letter not in LETTERS:
+        return None, None
+    col = LETTERS.index(col_letter)
+    try:
+        row_num = int(row_str)
+    except ValueError:
+        return None, None
+    if col < 0 or col >= size or row_num < 1 or row_num > size:
+        return None, None
+    return size - row_num, col
+
+
+def _place_black(grid: list[list[str]], row: int, col: int, size: int) -> None:
+    grid[row][col] = "B"
+    _remove_captures(grid, row, col, "W", size)
+
+
+def _place_white(grid: list[list[str]], row: int, col: int, size: int) -> None:
+    grid[row][col] = "W"
+    _remove_captures(grid, row, col, "B", size)
+
+
+def _remove_captures(grid: list[list[str]], row: int, col: int, opponent: str, size: int) -> None:
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nr, nc = row + dr, col + dc
+        if 0 <= nr < size and 0 <= nc < size and grid[nr][nc] == opponent:
+            group, liberties = _flood(grid, nr, nc, opponent, size)
+            if liberties == 0:
+                for gr, gc in group:
+                    grid[gr][gc] = "."
+
+
+def _flood(grid: list[list[str]], row: int, col: int, color: str, size: int) -> tuple[list[tuple[int, int]], int]:
+    visited: set[tuple[int, int]] = set()
+    group: list[tuple[int, int]] = []
+    liberties = 0
+    stack = [(row, col)]
+    while stack:
+        r, c = stack.pop()
+        if (r, c) in visited:
+            continue
+        visited.add((r, c))
+        if grid[r][c] == ".":
+            liberties += 1
+            continue
+        if grid[r][c] != color:
+            continue
+        group.append((r, c))
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < size and 0 <= nc < size and (nr, nc) not in visited:
+                stack.append((nr, nc))
+    return group, liberties
+
+
 def _float_prop(node, name: str) -> float | None:
     try:
         value = node.get(name)

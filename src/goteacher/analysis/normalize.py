@@ -11,6 +11,7 @@ from goteacher.analysis.schema import (
     EngineInfo,
     HumanPolicyTop,
     PolicyEntry,
+    PositionSummary,
     RequestInfo,
     RootEvaluation,
 )
@@ -132,6 +133,7 @@ def normalize_response(
     width = record.board_size
     height = record.board_size
     human_policy_top = _human_policy_top(analysis.get("humanPolicy"), analysis.get("policy"), width, height)
+    summary = _build_summary(root_info, played, candidates, profile)
     return AnalysisResult(
         request=RequestInfo(
             source="sgf" if sgf_path else "position",
@@ -174,6 +176,7 @@ def normalize_response(
         playedMoveEvaluation=played,
         candidates=candidates,
         humanPolicyTop=human_policy_top,
+        summary=summary,
         teaching=teaching,
         arrays=Arrays(
             policy=_board_array(analysis.get("policy"), width, height, policy=True),
@@ -238,3 +241,83 @@ def _human_policy_top(human_policy: Any, engine_policy: Any, width: int, height:
     paired.sort(key=lambda x: -x[1])
     entries = [PolicyEntry(move=coord, prior=ep_val if ep_val is not None else 0.0, humanPrior=hp_val) for coord, hp_val, ep_val in paired[:10]]
     return HumanPolicyTop(entries=entries)
+
+
+def _build_summary(root_info: dict[str, Any], played: Any, candidates: list[Candidate], profile: str | None) -> PositionSummary:
+    rvt = root_info.get("rawVarTimeLeft")
+    if rvt is not None:
+        rvt = float(rvt)
+        phase = "opening" if rvt > 30 else "middlegame" if rvt > 5 else "endgame"
+        phase_label = "布局" if rvt > 30 else "中盘" if rvt > 5 else "官子"
+    else:
+        phase = "unknown"
+        phase_label = "未知"
+
+    sl = root_info.get("scoreLead")
+    if sl is not None:
+        sl = float(sl)
+        leader = "黑" if sl < 0 else "白"
+        gap = abs(sl)
+        if gap < 1:
+            balance = "均衡"
+        elif gap < 5:
+            balance = f"{leader}方微领{gap:.1f}目"
+        elif gap < 15:
+            balance = f"{leader}方领先{gap:.1f}目"
+        else:
+            balance = f"{leader}方大优{gap:.1f}目"
+    else:
+        balance = "unknown"
+
+    hswe = root_info.get("humanStWrError")
+    if hswe is not None:
+        hswe = float(hswe)
+        complexity = "高" if hswe > 0.06 else "中等" if hswe > 0.03 else "低"
+    else:
+        complexity = "unknown"
+
+    verdict = None
+    if played.move:
+        if played.score_loss is not None:
+            if played.score_loss <= 0.5:
+                verdict = "好手，几乎无损失"
+            elif played.score_loss <= 3:
+                verdict = f"缓手，损失约{played.score_loss:.1f}目"
+            elif played.score_loss <= 8:
+                verdict = f"误手，损失约{played.score_loss:.1f}目"
+            else:
+                verdict = f"恶手，损失约{played.score_loss:.1f}目"
+        else:
+            verdict = "实战手未被充分搜索"
+
+    best_note = None
+    if candidates:
+        best = candidates[0]
+        parts = [f"{best.move}"]
+        if best.prior is not None:
+            parts.append(f"引擎prior={int(best.prior * 100)}%")
+        if best.human_prior is not None and profile:
+            parts.append(f"人类{profile}概率{int(best.human_prior * 100)}%")
+        best_note = "，".join(parts)
+
+    gap_note = None
+    if candidates and profile:
+        best = candidates[0]
+        if best.prior is not None and best.human_prior is not None:
+            ep = best.prior
+            hp = best.human_prior
+            if abs(ep - hp) > 0.15:
+                if ep > hp:
+                    gap_note = f"引擎强推{best.move}（{int(ep*100)}%），人类{profile}偏好较低（{int(hp*100)}%）"
+                else:
+                    gap_note = f"人类{profile}偏好{best.move}（{int(hp*100)}%），引擎评估较低（{int(ep*100)}%）"
+
+    return PositionSummary(
+        phase=phase,
+        phase_label=phase_label,
+        balance=balance,
+        complexity=complexity,
+        lastMoveVerdict=verdict,
+        bestMoveNote=best_note,
+        humanVsEngineGap=gap_note,
+    )
